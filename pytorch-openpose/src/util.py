@@ -10,6 +10,7 @@ from matplotlib.figure import Figure
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
+import os
 
 
 def padRightDownCorner(img, stride, padValue):
@@ -127,7 +128,7 @@ def draw_handpose_by_opencv(canvas, peaks, show_number=False):
     return canvas
 
 # detect hand according to body pose keypoints
-# please refer to https://github.com/CMU-Perceptual-Computing-Lab/openpose/blob/master/src/openpose/hand/handDetector.cpp
+# please refer to r"https://github.com/CMU-Perceptual-Computing-Lab/openpose/blob/master/src/openpose/hand/handDetector.cpp"
 def handDetect(candidate, subset, oriImg):
     # right hand: wrist 4, elbow 3, shoulder 2
     # left hand: wrist 7, elbow 6, shoulder 5
@@ -199,3 +200,58 @@ def npmax(array):
     i = arrayvalue.argmax()
     j = arrayindex[i]
     return i, j
+
+# 产生视频数据集对应的txt文件（视频路径 动作类别）
+def my_dataset_create(dataset_folder):
+    """
+    :param dataset_folder: 视频存放路径。 "/home/jlm/pytorch-openpose/data/ut-interaction_dataset"
+    :return:
+    """
+    dataset_txt = os.path.join(dataset_folder, 'dataset.txt')
+    with open(dataset_txt, 'a+') as writer:
+        for avi in os.listdir(dataset_folder):
+            if avi[-3:] == "avi":
+                writer.writelines(os.path.join(dataset_folder, avi) + " " + avi[-5:-4] + "\n")
+            else:
+                continue
+    writer.close()
+
+# 绘制accuracy_loss
+def draw_accuracy_loss(loss_list, accuracy_list, epo_num, stage, idx):
+    """
+    :param loss_list:
+    :param accuracy_list:
+    :param epo_num:
+    :param stage: train、val、test
+    :param idx: 绘制第idx幅图
+    :return:
+    """
+    # 迭代了epo_num次，所以x的取值范围为(0，epo_num)，然后再将每次相对应的准确率以及损失率附在x上
+    loss_x = range(0, epo_num)
+    acc_x = range(0, epo_num)
+    loss_y = loss_list
+    acc_y = accuracy_list
+
+    plt.figure(idx)
+    plt.subplot(2, 1, 1)
+    plt.plot(acc_x, acc_y, color="r", linestyle="-", marker="^", linewidth=1)  # 画图
+    plt.ylabel(stage + ' accuracy')
+
+    plt.figure(idx)
+    plt.subplot(2, 1, 2)
+    plt.plot(acc_x, acc_y, color="r", linestyle="-", marker="^", linewidth=1)  # 画图
+    plt.xlabel('epoches')
+    plt.ylabel(stage + 'loss')
+    plt.savefig("/home/jlm/pytorch-openpose/result/" + stage + "_accuracy_loss.jpg")
+
+
+if __name__ == '__main__':
+    dataset_folder = "/home/jlm/pytorch-openpose/data/ut-interaction_dataset"
+    print("生成txt文件：")
+    my_dataset_create(dataset_folder)
+
+
+
+
+
+

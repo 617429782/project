@@ -11,9 +11,10 @@ from src.hand import Hand
 body_estimation = Body('model/body_pose_model.pth')    # 初始化一个Body类实例
 ## hand_estimation = Hand('model/hand_pose_model.pth')
 
-#test_image = 'images/demo.jpg'
-test_image = 'images/rgb_000067.png'
+test_image = 'images/demo.jpg'
+#test_image = 'images/rgb_000067.png'
 oriImg = cv2.imread(test_image)  # B,G,R order
+
 candidate, subset = body_estimation(oriImg)    # 调用Body类实例的call函数
 canvas = copy.deepcopy(oriImg)
 canvas = util.draw_bodypose(canvas, candidate, subset)

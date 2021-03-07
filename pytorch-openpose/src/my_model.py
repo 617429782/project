@@ -3,6 +3,7 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+from src import my_global as mg
 
 def make_layers(block, no_relu_layers):
     layers = []
@@ -21,9 +22,9 @@ def make_layers(block, no_relu_layers):
 
     return nn.Sequential(OrderedDict(layers))
 
-class bodypose_model(nn.Module):
+class my_openpose(nn.Module):
     def __init__(self):
-        super(bodypose_model, self).__init__()
+        super(my_openpose, self).__init__()
 
         ### CNN: ###
         # these layers have no relu layer
@@ -114,18 +115,10 @@ class bodypose_model(nn.Module):
     def forward(self, x):
 
         out1 = self.model0(x)
-        print("out1.shape : " )
-        print(out1.shape)
 
         out1_1 = self.model1_1(out1)
         out1_2 = self.model1_2(out1)
         out2 = torch.cat([out1_1, out1_2, out1], 1)
-        print("out1_1.shape : ")
-        print(out1_1.shape)
-        print("out1_2.shape : ")
-        print(out1_2.shape)
-        print("out2.shape : ")
-        print(out2.shape)
 
         out2_1 = self.model2_1(out2)
         out2_2 = self.model2_2(out2)
@@ -146,83 +139,60 @@ class bodypose_model(nn.Module):
         out6_1 = self.model6_1(out6)
         out6_2 = self.model6_2(out6)
 
-        # 返回的即是两路网络分别的到的特征图
-        return out6_1, out6_2
+        # 返回的即是两路网络分别的到的特征图，以及最初得到的特征图
+        return out6_1, out6_2, out1
 
-class handpose_model(nn.Module):
-    def __init__(self):
-        super(handpose_model, self).__init__()
+class my_RNN(nn.Module):
+    """
+    RNN模型
+    由一个单层LSTM网络 + fc层构成
+    """
+    def __init__(self, input_size, hidden_size, output_size, num_layers=1):
+        super(my_RNN, self).__init__()
+        """
+        torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True)
+            in_channels : 输入图像通道数
+            out_channels : 卷积产生的通道数
+            kernel_size : 卷积核尺寸，可以设为1个int型数或者一个(int, int)型的元组。例如(2,3)是高2宽3卷积核
+        torch.nn.Linear(in_features, out_features, bias)
+            in_features : 指的是输入的二维张量的大小，即输入的[batch_size, size]中的size
+            out_features : 输出的二维张量的大小，即输出的二维张量的形状为[batch_size，output_size]，当然，它也代表了该全连接层的神经元个数。
+        torch.nn.LSTM()
+            batch_first=True:input,output都变成（batch, seq, future）
+        """
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.c = 185
+        self.h = 23
+        self.w = 31
+        self.length = 15
+        self.conv1 = nn.Conv2d(in_channels=self.c, out_channels=self.input_size, kernel_size=(self.h, self.w))
+        self.lstm = nn.LSTM(
+            input_size=self.input_size,
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers,
+            batch_first=True
+        )
+        self.linear = nn.Linear(hidden_size, output_size)
 
-        # these layers have no relu layer
-        no_relu_layers = ['conv6_2_CPM', 'Mconv7_stage2', 'Mconv7_stage3',\
-                          'Mconv7_stage4', 'Mconv7_stage5', 'Mconv7_stage6']
-        # stage 1
-        block1_0 = OrderedDict([
-                ('conv1_1', [3, 64, 3, 1, 1]),
-                ('conv1_2', [64, 64, 3, 1, 1]),
-                ('pool1_stage1', [2, 2, 0]),
-                ('conv2_1', [64, 128, 3, 1, 1]),
-                ('conv2_2', [128, 128, 3, 1, 1]),
-                ('pool2_stage1', [2, 2, 0]),
-                ('conv3_1', [128, 256, 3, 1, 1]),
-                ('conv3_2', [256, 256, 3, 1, 1]),
-                ('conv3_3', [256, 256, 3, 1, 1]),
-                ('conv3_4', [256, 256, 3, 1, 1]),
-                ('pool3_stage1', [2, 2, 0]),
-                ('conv4_1', [256, 512, 3, 1, 1]),
-                ('conv4_2', [512, 512, 3, 1, 1]),
-                ('conv4_3', [512, 512, 3, 1, 1]),
-                ('conv4_4', [512, 512, 3, 1, 1]),
-                ('conv5_1', [512, 512, 3, 1, 1]),
-                ('conv5_2', [512, 512, 3, 1, 1]),
-                ('conv5_3_CPM', [512, 128, 3, 1, 1])
-            ])
+    def forward(self, inputs):
+        """
+        前向传播
+        :param input: 输入, size = (batch, 999, input_size)
+        :param future: 在输入的基础上向前预测的步数
+        :return: 预测结果
+        """
+        inputs = self.conv1(inputs)
+        inputs = inputs.view(-1, self.length, self.input_size)  # (batch_size, length(/num_steps), input_size)
 
-        block1_1 = OrderedDict([
-            ('conv6_1_CPM', [128, 512, 1, 1, 0]),
-            ('conv6_2_CPM', [512, 22, 1, 1, 0])
-        ])
+        # 初始化参数
+        h_0 = torch.zeros(self.num_layers, len(inputs), self.hidden_size, dtype=torch.double).to(mg.device)
+        c_0 = torch.zeros(self.num_layers, len(inputs), self.hidden_size, dtype=torch.double).to(mg.device)
+        # 对于输入中的点，使用真实值作为输入
+        outputs, (h_n, c_n) = self.lstm(inputs, (h_0, c_0))
+        outputs = self.linear(outputs[:, -1, :])
 
-        blocks = {}
-        blocks['block1_0'] = block1_0
-        blocks['block1_1'] = block1_1
-
-        # stage 2-6
-        for i in range(2, 7):
-            blocks['block%d' % i] = OrderedDict([
-                    ('Mconv1_stage%d' % i, [150, 128, 7, 1, 3]),
-                    ('Mconv2_stage%d' % i, [128, 128, 7, 1, 3]),
-                    ('Mconv3_stage%d' % i, [128, 128, 7, 1, 3]),
-                    ('Mconv4_stage%d' % i, [128, 128, 7, 1, 3]),
-                    ('Mconv5_stage%d' % i, [128, 128, 7, 1, 3]),
-                    ('Mconv6_stage%d' % i, [128, 128, 1, 1, 0]),
-                    ('Mconv7_stage%d' % i, [128, 22, 1, 1, 0])
-                ])
-
-        for k in blocks.keys():
-            blocks[k] = make_layers(blocks[k], no_relu_layers)
-
-        self.model1_0 = blocks['block1_0']
-        self.model1_1 = blocks['block1_1']
-        self.model2 = blocks['block2']
-        self.model3 = blocks['block3']
-        self.model4 = blocks['block4']
-        self.model5 = blocks['block5']
-        self.model6 = blocks['block6']
-
-    def forward(self, x):
-        out1_0 = self.model1_0(x)
-        out1_1 = self.model1_1(out1_0)
-        concat_stage2 = torch.cat([out1_1, out1_0], 1)
-        out_stage2 = self.model2(concat_stage2)
-        concat_stage3 = torch.cat([out_stage2, out1_0], 1)
-        out_stage3 = self.model3(concat_stage3)
-        concat_stage4 = torch.cat([out_stage3, out1_0], 1)
-        out_stage4 = self.model4(concat_stage4)
-        concat_stage5 = torch.cat([out_stage4, out1_0], 1)
-        out_stage5 = self.model5(concat_stage5)
-        concat_stage6 = torch.cat([out_stage5, out1_0], 1)
-        out_stage6 = self.model6(concat_stage6)
-        return out_stage6
+        return outputs
 
 
