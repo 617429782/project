@@ -1,8 +1,8 @@
 import torch
 from collections import OrderedDict
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from src import my_global as mg
 
 def make_layers(block, no_relu_layers):
@@ -165,18 +165,15 @@ class my_RNN(nn.Module):
         self.num_layers = num_layers
         self.c = 185
         self.h = 23
-        self.w = 44
+        self.w = 31
         self.length = 15
-        self.batchnorm2d = nn.BatchNorm2d(self.c)
         self.conv1 = nn.Conv2d(in_channels=self.c, out_channels=self.input_size, kernel_size=(self.h, self.w))
         self.lstm = nn.LSTM(
             input_size=self.input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
-            batch_first=True,
-            dropout = 0.5
+            batch_first=True
         )
-        self.drop_layer = nn.Dropout(0.5)
         self.linear = nn.Linear(hidden_size, output_size)
 
     def forward(self, inputs):
@@ -186,7 +183,6 @@ class my_RNN(nn.Module):
         :param future: 在输入的基础上向前预测的步数
         :return: 预测结果
         """
-        inputs = F.relu(self.batchnorm2d(inputs))
         inputs = self.conv1(inputs)
         inputs = inputs.view(-1, self.length, self.input_size)  # (batch_size, length(/num_steps), input_size)
 
@@ -195,7 +191,7 @@ class my_RNN(nn.Module):
         c_0 = torch.zeros(self.num_layers, len(inputs), self.hidden_size, dtype=torch.double).to(mg.device)
         # 对于输入中的点，使用真实值作为输入
         outputs, (h_n, c_n) = self.lstm(inputs, (h_0, c_0))
-        outputs = self.linear(self.drop_layer(outputs[:, -1, :]))
+        outputs = self.linear(outputs[:, -1, :])
 
         return outputs
 
