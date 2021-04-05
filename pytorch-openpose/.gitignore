@@ -5,3 +5,7 @@ hiddenlayer/
 .ipynb_checkpoints/
 __pycache__
 *.prototxt
+
+/model/
+/data/
+ *.jpg

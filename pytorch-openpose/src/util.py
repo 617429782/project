@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 import os
+import time
 
 
 def padRightDownCorner(img, stride, padValue):
@@ -242,8 +243,8 @@ def draw_accuracy_loss(loss_list, accuracy_list, epo_num, stage, time, idx):
     plt.plot(loss_x, loss_y, color="r", linestyle="-", marker="^", linewidth=1)  # 画图
     plt.xlabel('epoches')
     plt.ylabel(stage + 'loss')
-    plt.savefig("/home/jlm/pytorch-openpose/result/unoptimize_" + stage + "_accuracy_loss.jpg")
-
+    plt.savefig("/home/jlm/pytorch-openpose/result/" + stage + "_accuracy_loss_" + time + ".jpg")
+    plt.close(idx)
 
 if __name__ == '__main__':
     dataset_folder = "/home/jlm/pytorch-openpose/data/ut-interaction_dataset"

@@ -42,9 +42,9 @@ test_size = len(all_dataset) - train_size - val_size
 train_dataset, val_dataset, test_dataset = random_split(all_dataset, [train_size, val_size, test_size])
 
 # dataloader
-train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=1)
-val_dataloader = DataLoader(val_dataset, batch_size=4, shuffle=True, num_workers=1)
-test_dataloader = DataLoader(test_dataset, batch_size=4, shuffle=True, num_workers=1)
+train_dataloader = DataLoader(train_dataset, batch_size=mg.batch_size, shuffle=True, num_workers=1)
+val_dataloader = DataLoader(val_dataset, batch_size=mg.batch_size, shuffle=True, num_workers=1)
+test_dataloader = DataLoader(test_dataset, batch_size=mg.batch_size, shuffle=True, num_workers=1)
 
 # 网络
 body_estimation = my_Body('model/body_pose_model.pth')
@@ -102,7 +102,6 @@ def my_val(dataloader):
     print("val_acc:{}， val_loss：{}".format(val_acc, val_loss))
     return val_acc, val_loss
 
-@torchsnooper.snoop()
 def my_train(epo_num=50):
     """### 记录训练过程每个epoch相关指标 ###"""
     # all_train_iter_loss = []    # 记录所有loss值。即每个batch的loss都会记录下来，所有epoch都记录在一起

@@ -1,37 +1,19 @@
 from torch.utils.data import Dataset, DataLoader, random_split
-import torchvision.transforms as transforms
+import torchvision.models as models
+import torch
+import torch.nn as nn
+import torch.optim as optim
 import numpy as np
 import torchsnooper
-import os
-import torch
-import torch.optim as optim
-import torch.nn as nn
 import time
 import src.my_create_dataset as dataset
-from src.my_body import my_Body
-from src import my_model as mymodel
 from src import my_global as mg
+from src import my_model as mymodel
 from src.util import draw_accuracy_loss as draw_accuracy_loss
 
 """### 全局变量 ###"""
 time = str(time.time())
 # 数据集
-"""
-transform_train = transforms.Compose([transforms.Resize(256),  # 重置图像分辨率
-                                      transforms.RandomResizedCrop(224),  # 随机裁剪
-                                      transforms.RandomHorizontalFlip(),  # 以概率p水平翻转
-                                      transforms.RandomVerticalFlip(),  # 以概率p垂直翻转
-                                      transforms.ToTensor(),])
-transformation = transforms.Compose([
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
-transform = transforms.Compose([
-    transforms.Resize(256),  # 重置图像分辨率
-    transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-])
-"""
 dataPath = "/home/jlm/pytorch-openpose/data/ut-interaction_dataset/dataset.txt"
 all_dataset = dataset.MyDataset(dataPath)
 
@@ -42,67 +24,64 @@ test_size = len(all_dataset) - train_size - val_size
 train_dataset, val_dataset, test_dataset = random_split(all_dataset, [train_size, val_size, test_size])
 
 # dataloader
-train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=1)
-val_dataloader = DataLoader(val_dataset, batch_size=4, shuffle=True, num_workers=1)
-test_dataloader = DataLoader(test_dataset, batch_size=4, shuffle=True, num_workers=1)
+train_dataloader = DataLoader(train_dataset, batch_size=mg.batch_size, shuffle=True, num_workers=1)
+val_dataloader = DataLoader(val_dataset, batch_size=mg.batch_size, shuffle=True, num_workers=1)
+test_dataloader = DataLoader(test_dataset, batch_size=mg.batch_size, shuffle=True, num_workers=1)
 
 # 网络
-body_estimation = my_Body('model/body_pose_model.pth')
-rnn = mymodel.my_RNN(input_size=256, hidden_size=256, output_size=6, num_layers=2)
-rnn.to(mg.device)
+vgg = models.vgg16(pretrained=True).to(mg.device)
+vgg_lstm = mymodel.my_Vgg_Lstm(vgg).to(mg.device)
+pretrained_vgg_dict = vgg.state_dict()
+vgg_lstm_dict = vgg_lstm.state_dict()
+pretrained_vgg_dict = {k: v for k, v in pretrained_vgg_dict.items() if k in vgg_lstm_dict}
+vgg_lstm_dict.update(pretrained_vgg_dict)
+vgg_lstm.load_state_dict(vgg_lstm_dict)
 
 # 损失函数、优化器（待定)
 criterion = nn.CrossEntropyLoss().to(mg.device)   # CrossEntropyLoss()函数的主要是将softmax-log-NLLLoss(交叉熵)合并到一块得到的结果
-optimizer = optim.Adam(rnn.parameters())
-# optimizer = optim.SGD(rnn.parameters(), lr=1e-3, momentum=0.7)
-
+optimizer = optim.Adam(vgg_lstm.parameters(), lr = 1.0E-5)
 
 def save_models(epoch):
-    modelPath = "/home/jlm/pytorch-openpose/model/myRnnModel_{}.model".format(epoch)
-    torch.save(rnn.state_dict(), modelPath)
+    modelPath = "/home/jlm/pytorch-openpose/model/myVggLstmModel_{}.model".format(epoch)
+    torch.save(vgg_lstm.state_dict(), modelPath)
     print("Chekcpoint saved")
     return modelPath
+
+def get_outputs(inputs):
+    batch_size = len(inputs)
+    length = len(inputs[0])
+    h = len(inputs[0][0])
+    w = len(inputs[0][0][0])
+    c = len(inputs[0][0][0][0])
+    inputs = inputs.view(-1, h, w, c)
+    inputs = inputs.permute(0, 3, 1, 2)  # x*h*w*c -> x*c*h*w
+    inputs = inputs.type(torch.float32).to(mg.device)
+    outputs = vgg_lstm(inputs)
+    return outputs
 
 def my_val(dataloader):
     val_acc = 0.0
     val_loss = 0.0
-    rnn.eval()
+    vgg_lstm.eval()
     for i, data in enumerate(dataloader):
-        """ (1) 运用openpose """
         inputs, labels = data  # 返回的是tensor类型
-        batch_size = len(inputs)
-        length = len(inputs[0])
-        h = len(inputs[0][0])
-        w = len(inputs[0][0][0])
-        c = len(inputs[0][0][0][0])
-        inputs = inputs.view(-1, h, w, c)
-        inputs = np.array(inputs)
-        intermediate_outputs = []  # 存放通过openpose得到的特征图。len:(batch_size*length); 元素size：n*h'*w'*c'
-        for idx in range(len(inputs)):
-            interout = body_estimation(inputs[idx])
-            interout = np.array(torch.squeeze(interout).cpu())
-            intermediate_outputs.append(interout)
-
-        """ (2) lstm """
-        inputs = torch.from_numpy(np.array(intermediate_outputs)).to(mg.device)
         labels = torch.squeeze(labels).to(mg.device)
-        outputs = rnn(inputs)
+        batch_size = len(inputs)
+
+        outputs = get_outputs(inputs)
         loss = criterion(outputs, labels)
 
         val_loss += loss.item() * batch_size
         _, prediction = torch.max(outputs.data, 1)
         val_acc += torch.sum(prediction == labels.data)
-        print("val: {}/{}, prediction:{} , lables:{}, equal:{}".format(i, len(dataloader), prediction, labels.data, torch.sum(prediction == labels.data)))
+        print("vgg_lstm: {}/{}, prediction:{}, lables:{}, equal:{}".format(i, len(dataloader), prediction, labels.data, torch.sum(prediction == labels.data)))
         print("val_acc:{}".format(val_acc))
 
-    # Compute the average acc and loss over all 10000 test images
-    # val_acc = val_acc / len(dataloader)
     val_acc = float(val_acc) / float(val_size)
     val_loss = float(val_loss) / float(len(dataloader))
     print("val_acc:{}， val_loss：{}".format(val_acc, val_loss))
     return val_acc, val_loss
 
-@torchsnooper.snoop()
 def my_train(epo_num=50):
     """### 记录训练过程每个epoch相关指标 ###"""
     # all_train_iter_loss = []    # 记录所有loss值。即每个batch的loss都会记录下来，所有epoch都记录在一起
@@ -120,28 +99,13 @@ def my_train(epo_num=50):
         print("epoch:{}".format(epoch))
         train_loss = 0.0
         train_acc = 0.0
-        rnn.train()
+        vgg_lstm.train()
         for i, data in enumerate(train_dataloader):
-            """ (1) 运用openpose """
-            inputs, labels = data  # 返回tensor类型
+            inputs, labels = data  # 返回的是tensor类型
             batch_size = len(inputs)
-            length = len(inputs[0])
-            h = len(inputs[0][0])
-            w = len(inputs[0][0][0])
-            c = len(inputs[0][0][0][0])
-            inputs = inputs.view(-1, h, w, c)
-            inputs = np.array(inputs)
-            intermediate_outputs = []      # 存放通过openpose得到的特征图。len:(batch_size*length); 元素size：n*h'*w'*c'
-            for idx in range(len(inputs)):
-                interout = body_estimation(inputs[idx])
-                interout = np.array(torch.squeeze(interout).cpu())
-                intermediate_outputs.append(interout)
-
-            """ (2) 训练lstm网络 """
-            inputs = torch.from_numpy(np.array(intermediate_outputs)).to(mg.device)
             labels = torch.squeeze(labels).to(mg.device)
-            optimizer.zero_grad()
-            outputs = rnn(inputs)
+            outputs = get_outputs(inputs)
+
             loss = criterion(outputs, labels)
             loss.backward()  # 需要计算导数，则调用backward
             optimizer.step()
@@ -155,10 +119,6 @@ def my_train(epo_num=50):
             train_acc += torch.sum(prediction == labels.data)
             print("train: {}/{}, prediction:{}, labels:{}, equal:{}".format(i, len(train_dataloader), prediction, labels.data, torch.sum(prediction == labels.data)))
             print("train_acc:{}".format(train_acc))
-
-            # 每5个bacth，输出一次训练过程的数据
-            #if np.mod(i, 5) == 0:
-            #    print('epoch {}, {}/{},train loss is {}'.format(epoch, i, len(train_dataloader), iter_loss))
 
         # train_acc = train_acc / len(train_dataloader)
         train_acc = float(train_acc) / float(train_size)
@@ -190,32 +150,16 @@ def my_test(best_weight_path, dataloader):
         print("best_weight_path is None")
     else:
         checkpoint = torch.load(best_weight_path)
-        rnn.load_state_dict(checkpoint)
-        rnn.to(mg.device)
-        rnn.eval()
+        vgg_lstm.load_state_dict(checkpoint)
+        vgg_lstm.to(mg.device)
+        vgg_lstm.eval()
 
     test_acc = 0.0
     for i, data in enumerate(dataloader):
-        """ (1) 运用openpose """
         inputs, labels = data  # 返回的是tensor类型
         batch_size = len(inputs)
-        length = len(inputs[0])
-        h = len(inputs[0][0])
-        w = len(inputs[0][0][0])
-        c = len(inputs[0][0][0][0])
-        inputs = inputs.view(-1, h, w, c)
-        inputs = np.array(inputs)
-        intermediate_outputs = []  # 存放通过openpose得到的特征图。len:(batch_size*length); 元素size：n*h'*w'*c'
-        for idx in range(len(inputs)):
-            interout = body_estimation(inputs[idx])
-            interout = np.array(torch.squeeze(interout).cpu())
-            intermediate_outputs.append(interout)
-
-        """ (2) lstm """
-        inputs = torch.from_numpy(np.array(intermediate_outputs)).to(mg.device)
         labels = torch.squeeze(labels).to(mg.device)
-        outputs = rnn(inputs)
-        loss = criterion(outputs, labels)
+        outputs = get_outputs(inputs)
 
         _, prediction = torch.max(outputs.data, 1)
         test_acc += torch.sum(prediction == labels.data)
@@ -224,10 +168,10 @@ def my_test(best_weight_path, dataloader):
     val_acc = float(test_acc) / float(test_size)
     print("test_acc:{}".format(val_acc))
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     """### 训练模型 ###"""
-    best_weight_path = my_train(epo_num=100)
+    best_weight_path = my_train(epo_num=200)
 
     """### 测试模型 ###"""
     my_test(best_weight_path, test_dataloader)

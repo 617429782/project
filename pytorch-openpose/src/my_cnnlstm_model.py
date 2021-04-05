@@ -1,10 +1,8 @@
 import torch
 from collections import OrderedDict
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from src import my_global as mg
-import torchvision.models as models
 
 def make_layers(block, no_relu_layers):
     layers = []
@@ -25,7 +23,7 @@ def make_layers(block, no_relu_layers):
 
 class my_openpose(nn.Module):
     def __init__(self):
-        super(my_openpose, self).__init__()
+        super(bodypose_model, self).__init__()
 
         ### CNN: ###
         # these layers have no relu layer
@@ -116,10 +114,18 @@ class my_openpose(nn.Module):
     def forward(self, x):
 
         out1 = self.model0(x)
+        print("out1.shape : " )
+        print(out1.shape)
 
         out1_1 = self.model1_1(out1)
         out1_2 = self.model1_2(out1)
         out2 = torch.cat([out1_1, out1_2, out1], 1)
+        print("out1_1.shape : ")
+        print(out1_1.shape)
+        print("out1_2.shape : ")
+        print(out1_2.shape)
+        print("out2.shape : ")
+        print(out2.shape)
 
         out2_1 = self.model2_1(out2)
         out2_2 = self.model2_2(out2)
@@ -140,8 +146,8 @@ class my_openpose(nn.Module):
         out6_1 = self.model6_1(out6)
         out6_2 = self.model6_2(out6)
 
-        # 返回的即是两路网络分别的到的特征图，以及最初得到的特征图
-        return out6_1, out6_2, out1
+        # 返回的即是两路网络分别的到的特征图
+        return out6_1, out6_2
 
 class my_RNN(nn.Module):
     """
@@ -161,95 +167,40 @@ class my_RNN(nn.Module):
         torch.nn.LSTM()
             batch_first=True:input,output都变成（batch, seq, future）
         """
-        self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.c = 185
-        self.h = 23
-        self.w = 44
-        self.length = 15
-        self.batchnorm2d = nn.BatchNorm2d(self.c)
-        self.conv1 = nn.Conv2d(in_channels=self.c, out_channels=self.input_size, kernel_size=(self.h, self.w))
+        self.conv1 = nn.Conv2d(3, 1, (296,400)) # （各参数先暂定：）定义conv1函数的是图像卷积函数：输入为图像（3个通道，即RGB）,输出为1张特征图（即卷积核为1个）, 卷积核为5x5正方形
+        self.conv2 = nn.Conv2d(3, 1, 5)
+        self.conv3 = nn.Conv2d(3, 1, 5)
         self.lstm = nn.LSTM(
-            input_size=self.input_size,
-            hidden_size=self.hidden_size,
-            num_layers=self.num_layers,
-            batch_first=True,
-            dropout = 0.5
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True
         )
-        self.drop_layer = nn.Dropout(0.5)
         self.linear = nn.Linear(hidden_size, output_size)
 
-    def forward(self, inputs):
+    def forward(self, inputs, length):
         """
         前向传播
         :param input: 输入, size = (batch, 999, input_size)
         :param future: 在输入的基础上向前预测的步数
         :return: 预测结果
         """
-        inputs = F.relu(self.batchnorm2d(inputs))
-        inputs = self.conv1(inputs)
-        inputs = inputs.view(-1, self.length, self.input_size)  # (batch_size, length(/num_steps), input_size)
+        inputs = self.conv1()
+        inputs = self.conv2()
+        inputs = self.conv3()  # shape(batch_size*length, n)
+        input_size = inputs[1]
+        num_steps = length
+        inputs = inputs.view(-1, num_steps, input_size)  # (batch_size, num_steps, input_size)
 
         # 初始化参数
-        h_0 = torch.zeros(self.num_layers, len(inputs), self.hidden_size, dtype=torch.double).to(mg.device)
-        c_0 = torch.zeros(self.num_layers, len(inputs), self.hidden_size, dtype=torch.double).to(mg.device)
+        h_0 = torch.zeros(self.num_layers, inputs.size(0), self.hidden_size, dtype=torch.double).cuda()
+        c_0 = torch.zeros(self.num_layers, inputs.size(0), self.hidden_size, dtype=torch.double).cuda()
         # 对于输入中的点，使用真实值作为输入
         outputs, (h_n, c_n) = self.lstm(inputs, (h_0, c_0))
-        outputs = self.linear(self.drop_layer(outputs[:, -1, :]))
+        outputs = self.linear(outputs[:, -1, :])
 
         return outputs
-
-class my_Vgg_Lstm(nn.Module):
-    def __init__(self, vggnet):
-        super(my_Vgg_Lstm, self).__init__()
-        # self.vggnet = vggnet
-        self.features = vggnet.features
-        self.avgpool = vggnet.avgpool
-        self.classifier = vggnet.classifier
-        # 预训练模型加载进来后全部设置为不更新参数，然后再后面加层
-        for p in self.parameters():
-            p.requires_grad = False
-        self.lstm = nn.LSTM(
-            input_size=1000,
-            hidden_size=mg.lstm_hiddenSize,
-            num_layers=mg.lstm_numLayers,
-            batch_first=True,
-            dropout=0.5
-        )
-        self.drop_layer = nn.Dropout(0.5)
-        self.linear = nn.Linear(mg.lstm_hiddenSize, mg.numClasses)
-
-        # 原vgg_lstm网络，vgg网络输出特征图：512 * 7 * 7
-        # self.c = 512
-        # self.h = 7
-        # self.w = 7
-        # self.batchnorm2d = nn.BatchNorm2d(self.c)
-        # self.conv1 = nn.Conv2d(in_channels=self.c, out_channels=mg.lstm_inputSize, kernel_size=(self.h, self.w))
-        # self.lstm = nn.LSTM(
-        #     input_size=mg.lstm_inputSize,
-        #     hidden_size=mg.lstm_hiddenSize,
-        #     num_layers=mg.lstm_numLayers,
-        #     batch_first=True,
-        #     dropout=0.5
-        # )
-        # self.drop_layer = nn.Dropout(0.5)
-        # self.linear = nn.Linear(mg.lstm_hiddenSize, mg.numClasses)
-
-    def forward(self, inputs):
-        # inputs = self.vggnet(inputs)
-        inputs = self.features(inputs)
-        inputs = self.avgpool(inputs)
-        inputs = torch.flatten(inputs, 1)
-        inputs = self.classifier(inputs)
-        inputs = inputs.view(-1, mg.video_length, 1000)
-
-        h_0 = torch.zeros(mg.lstm_numLayers*mg.lstm_directions, len(inputs), mg.lstm_hiddenSize, dtype=torch.double).to(mg.device)
-        c_0 = torch.zeros(mg.lstm_numLayers*mg.lstm_directions, len(inputs), mg.lstm_hiddenSize, dtype=torch.double).to(mg.device)
-        outputs, (h_n, c_n) = self.lstm(inputs, (h_0, c_0))
-        outputs = self.linear(self.drop_layer(outputs[:, -1, :]))
-
-        return outputs
-
 
 
